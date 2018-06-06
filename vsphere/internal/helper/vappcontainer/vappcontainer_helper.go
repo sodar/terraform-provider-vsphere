@@ -58,12 +58,11 @@ func Properties(obj *object.VirtualApp) (*mo.VirtualApp, error) {
 }
 
 // Create creates a VirtualApp.
-func Create(
-	va *object.VirtualApp, name string, resSpec *types.ResourceConfigSpec, vSpec *types.VAppConfigSpec) (*object.VirtualApp, error) {
+func Create(va *object.ResourcePool, name string, resSpec *types.ResourceConfigSpec, vSpec *types.VAppConfigSpec, folder *object.Folder) (*object.VirtualApp, error) {
 	log.Printf("[DEBUG] Creating vApp container %q", fmt.Sprintf("%s/%s", va.InventoryPath, name))
 	ctx, cancel := context.WithTimeout(context.Background(), provider.DefaultAPITimeout)
 	defer cancel()
-	nva, err := va.CreateVApp(ctx, name, *resSpec, *vSpec, nil)
+	nva, err := va.CreateVApp(ctx, name, *resSpec, *vSpec, folder)
 	if err != nil {
 		return nil, err
 	}

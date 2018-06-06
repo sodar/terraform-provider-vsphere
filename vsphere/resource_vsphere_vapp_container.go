@@ -3,10 +3,12 @@ package vsphere
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/customattribute"
+	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/folder"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/resourcepool"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/structure"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/vappcontainer"
@@ -41,8 +43,13 @@ func resourceVSphereVAppContainer() *schema.Resource {
 		},
 		"parent_resource_pool_id": {
 			Type:        schema.TypeString,
-			Description: "The ID of the root resource pool of the compute resource the resource pool is in.",
+			Description: "The ID of the parent resource pool of the compute resource the resource pool is in.",
 			Required:    true,
+		},
+		"parent_folder": {
+			Type:        schema.TypeString,
+			Description: "The ID of the parent VM folder.",
+			Optional:    true,
 		},
 		"cpu_share_level": {
 			Type:         schema.TypeString,
@@ -140,13 +147,30 @@ func resourceVSphereVAppContainerCreate(d *schema.ResourceData, meta interface{}
 	if err != nil {
 		return err
 	}
-	prp, err := vappcontainer.FromID(client, d.Get("parent_resource_pool_id").(string))
+	prp, err := resourcepool.FromID(client, d.Get("parent_resource_pool_id").(string))
 	if err != nil {
 		return err
 	}
 	rpSpec := expandVAppContainerConfigSpec(d)
 	vaSpec := &types.VAppConfigSpec{}
-	va, err := vappcontainer.Create(prp, d.Get("name").(string), rpSpec, vaSpec)
+	var f *object.Folder
+	if pf, ok := d.GetOk("parent_folder"); ok {
+		f, err = folder.FromID(client, pf.(string))
+		if err != nil {
+			return err
+		}
+	} else {
+		dc, err := getDatacenter(client, strings.Split(prp.InventoryPath, "/")[1])
+		if err != nil {
+			return err
+		}
+		//pf = fmt.Sprintf("/%s/vm", dc.Name())
+		f, err = folder.FromPath(client, "", folder.VSphereFolderTypeVM, dc)
+		if err != nil {
+			return err
+		}
+	}
+	va, err := vappcontainer.Create(prp, d.Get("name").(string), rpSpec, vaSpec, f)
 	if err != nil {
 		return err
 	}
