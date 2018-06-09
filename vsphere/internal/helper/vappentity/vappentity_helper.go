@@ -1,9 +1,10 @@
-package vappcontainer
+package vappentity
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/provider"
 	"github.com/vmware/govmomi"
@@ -26,8 +27,12 @@ func FromPath(client *govmomi.Client, name string, dc *object.Datacenter) (*obje
 }
 
 // FromID locates a VirtualApp by its managed object reference ID.
-func FromID(client *govmomi.Client, id string) (*object.VirtualApp, error) {
-	log.Printf("[DEBUG] Locating resource pool with ID %s", id)
+func FromID(client *govmomi.Client, id string, container *mo.VirtualApp) (*types.VAppEntityConfigInfo, error) {
+	log.Printf("[DEBUG] Locating vApp Entity %s", id)
+	key := strings.Split()
+	for _, e := range container.VAppConfig.EntityConfig {
+		//		if e.Key
+	}
 	finder := find.NewFinder(client.Client, false)
 
 	ref := types.ManagedObjectReference{

@@ -1,20 +1,16 @@
 package vsphere
 
 import (
-	"fmt"
 	"log"
 	"strings"
 
 	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/helper/validation"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/customattribute"
-	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/folder"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/resourcepool"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/structure"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/vappcontainer"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/viapi"
 	"github.com/vmware/govmomi"
-	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/vim25/types"
 )
 
@@ -31,12 +27,6 @@ func resourceVSphereVAppEntity() *schema.Resource {
 			Type:        schema.TypeString,
 			Description: "Managed object ID of the vApp container the entity is a member of.",
 			Required:    true,
-		},
-		"destroy_with_parent": {
-			Type:        schema.TypeBool,
-			Description: "Whether the entity should be removed, when this vApp is removed. This is only set for linked children.",
-			Default:     false,
-			Optional:    true,
 		},
 		"start_action": {
 			Type:        schema.TypeString,
@@ -82,93 +72,64 @@ func resourceVSphereVAppEntity() *schema.Resource {
 }
 
 func resourceVSphereVAppEntityImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
-	client, err := resourceVSphereVAppContainerClient(meta)
-	if err != nil {
-		return nil, err
-	}
-	va, err := vappcontainer.FromPath(client, d.Id(), nil)
-	if err != nil {
-		return nil, err
-	}
-	d.SetId(va.Reference().Value)
-	return []*schema.ResourceData{d}, nil
+	return nil, nil
 }
 
 func resourceVSphereVAppEntityCreate(d *schema.ResourceData, meta interface{}) error {
-	log.Printf("[DEBUG] %s: Beginning create", resourceVSphereVAppContainerIDString(d))
+	log.Printf("[DEBUG] %s: Beginning create", resourceVSphereVAppEntityIDString(d))
 	client, err := resourceVSphereVAppContainerClient(meta)
 	if err != nil {
 		return err
 	}
-	prp, err := resourcepool.FromID(client, d.Get("parent_resource_pool_id").(string))
+	container, err := vappcontainer.FromID(client, d.Get("container_id").(string))
 	if err != nil {
 		return err
 	}
-	rpSpec := expandVAppContainerConfigSpec(d)
-	vaSpec := &types.VAppConfigSpec{}
-	var f *object.Folder
-	if pf, ok := d.GetOk("parent_folder"); ok {
-		f, err = folder.FromID(client, pf.(string))
-		if err != nil {
-			return err
-		}
-	} else {
-		dc, err := getDatacenter(client, strings.Split(prp.InventoryPath, "/")[1])
-		if err != nil {
-			return err
-		}
-		//pf = fmt.Sprintf("/%s/vm", dc.Name())
-		f, err = folder.FromPath(client, "", folder.VSphereFolderTypeVM, dc)
-		if err != nil {
-			return err
-		}
-	}
-	va, err := vappcontainer.Create(prp, d.Get("name").(string), rpSpec, vaSpec, f)
+	mo, err := vappcontainer.Properties(container)
 	if err != nil {
 		return err
 	}
-	if err = resourceVSphereVAppContainerApplyTags(d, meta, va); err != nil {
+	entityConfig := types.VAppEntityConfigInfo{
+		StartAction:     d.Get("start_action").(string),
+		StartDelay:      int32(d.Get("start_delay").(int)),
+		StopAction:      d.Get("start_action").(string),
+		StopDelay:       int32(d.Get("start_delay").(int)),
+		StartOrder:      int32(d.Get("start_order").(int)),
+		WaitingForGuest: structure.GetBoolPtr(d, "wait_for_guest"),
+	}
+	mo.VAppConfig.EntityConfig = append(mo.VAppConfig.EntityConfig, entityConfig)
+	updateSpec := types.VAppConfigSpec{
+		EntityConfig: mo.VAppConfig.EntityConfig,
+	}
+
+	if err = vappcontainer.Update(container, updateSpec); err != nil {
 		return err
 	}
-	d.SetId(va.Reference().Value)
+
 	log.Printf("[DEBUG] %s: Create finished successfully", resourceVSphereVAppContainerIDString(d))
 	return nil
 }
 
 func resourceVSphereVAppEntityRead(d *schema.ResourceData, meta interface{}) error {
-	log.Printf("[DEBUG] %s: Beginning read", resourceVSphereVAppContainerIDString(d))
+	log.Printf("[DEBUG] %s: Beginning read", resourceVSphereVAppEntityIDString(d))
 	client, err := resourceVSphereVAppContainerClient(meta)
 	if err != nil {
 		return err
 	}
-	va, err := vappcontainer.FromID(client, d.Id())
-	if err != nil {
-		if viapi.IsManagedObjectNotFoundError(err) {
-			log.Printf("[DEBUG] %s: Resource has been deleted", resourceVSphereVAppContainerIDString(d))
-			d.SetId("")
-			return nil
-		}
-		return err
-	}
-	if err = resourceVSphereVAppContainerReadTags(d, meta, va); err != nil {
-		return err
-	}
-	err = d.Set("name", va.Name())
+	entity, err := resourceVSphereVAppEntityFind(client, d)
 	if err != nil {
 		return err
 	}
-	vaProps, err := vappcontainer.Properties(va)
+	if entity == nil {
+		log.Printf("[DEBUG] %s: Resource has been deleted", resourceVSphereVAppEntityIDString(d))
+		d.SetId("")
+		return nil
+	}
+	err = flattenVAppEntityConfigSpec(client, d, entity)
 	if err != nil {
 		return err
 	}
-	if err = d.Set("parent_resource_pool_id", vaProps.Parent.Value); err != nil {
-		return err
-	}
-	err = flattenVAppContainerConfigSpec(d, vaProps.Config)
-	if err != nil {
-		return err
-	}
-	log.Printf("[DEBUG] %s: Read finished successfully", resourceVSphereVAppContainerIDString(d))
+	log.Printf("[DEBUG] %s: Read finished successfully", resourceVSphereVAppEntityIDString(d))
 	return nil
 }
 
@@ -209,25 +170,23 @@ func resourceVSphereVAppEntityUpdate(d *schema.ResourceData, meta interface{}) e
 }
 
 func resourceVSphereVAppEntityDelete(d *schema.ResourceData, meta interface{}) error {
-	log.Printf("[DEBUG] %s: Beginning delete", resourceVSphereVAppContainerIDString(d))
-	client, err := resourceVSphereVAppContainerClient(meta)
-	if err != nil {
-		return err
-	}
-	va, err := vappcontainer.FromID(client, d.Id())
-	if err != nil {
-		return err
-	}
-	err = resourceVSphereVAppContainerValidateEmpty(va)
-	if err != nil {
-		return err
-	}
-	err = vappcontainer.Delete(va)
-	if err != nil {
-		return err
-	}
-	log.Printf("[DEBUG] %s: Deleted successfully", resourceVSphereVAppContainerIDString(d))
 	return nil
+}
+
+func resourceVSphereVAppEntityFind(client *govmomi.Client, d *schema.ResourceData) (*types.VAppEntityConfigInfo, error) {
+	parts := strings.SplitN(d.Id(), ":", 2)
+	cid := parts[0]
+	eid := parts[1]
+	container, err := vappcontainer.FromID(client, cid)
+	if err != nil {
+		return nil, err
+	}
+	props, err := vappcontainer.Properties(container)
+	if err != nil {
+		return nil, err
+	}
+	entity := vappcontainer.EntityFromKey(eid, props)
+	return entity, nil
 }
 
 // resourceVSphereVAppEntityIDString prints a friendly string for the
@@ -236,26 +195,27 @@ func resourceVSphereVAppEntityIDString(d structure.ResourceIDStringer) string {
 	return structure.ResourceIDString(d, resourceVSphereVAppEntityName)
 }
 
-func flattenVAppEntityConfigSpec(client *govmomi.Client, d *schema.ResourceData, obj types.VAppEntityConfigInfo) error {
-	target, err := vAppEntityChildReference(client, obj.Key)
+func flattenVAppEntityConfigSpec(client *govmomi.Client, d *schema.ResourceData, obj *types.VAppEntityConfigInfo) error {
+	target, err := vAppEntityChildReference(client, obj.Key.Value)
 	if err != nil {
 		return err
 	}
 	return structure.SetBatch(d, map[string]interface{}{
 		"target_id":           target,
 		"destroy_with_parent": obj.DestroyWithParent,
-		"startAction":         obj.StartAction,
-		"startDelay":          obj.StartDelay,
-		"stopAction":          obj.StopAction,
-		"stopDelay":           obj.StopDelay,
+		"start_action":        obj.StartAction,
+		"start_delay":         obj.StartDelay,
+		"start_order":         obj.StartOrder,
+		"stop_action":         obj.StopAction,
+		"stop_delay":          obj.StopDelay,
 		"wait_for_guest":      obj.WaitingForGuest,
 	})
 }
 
-func expandVAppEntityConfigSpec(client, d *schema.ResourceData) *types.VAppEntityConfigInfo {
+func expandVAppEntityConfigSpec(client *govmomi.Client, d *schema.ResourceData) (*types.VAppEntityConfigInfo, error) {
 	target, err := vAppEntityChild(client, d.Get("target_id").(string))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return &types.VAppEntityConfigInfo{
 		Key:               target,
@@ -265,7 +225,7 @@ func expandVAppEntityConfigSpec(client, d *schema.ResourceData) *types.VAppEntit
 		StopAction:        d.Get("stop_action").(string),
 		StopDelay:         int32(d.Get("stop_delay").(int)),
 		WaitingForGuest:   structure.GetBoolPtr(d, "wait_for_guest"),
-	}
+	}, nil
 }
 
 func resourceVSphereVAppEntityClient(meta interface{}) (*govmomi.Client, error) {
@@ -276,8 +236,10 @@ func resourceVSphereVAppEntityClient(meta interface{}) (*govmomi.Client, error) 
 	return client, nil
 }
 
-func vAppEntityChildReference(client *govmomi.Client, d *schema.ResourceData) (string, error) {
+func vAppEntityChildReference(client *govmomi.Client, ref string) (string, error) {
+	return "", nil
 }
 
-func vAppEntityChild(client *govmomi.Client, entity string) (string, error) {
+func vAppEntityChild(client *govmomi.Client, entity string) (*types.ManagedObjectReference, error) {
+	return &types.ManagedObjectReference{}, nil
 }

@@ -53,6 +53,19 @@ func IsVApp(client *govmomi.Client, rp string) bool {
 	return true
 }
 
+// EntityFromKey locates a VAppEntityConfigInfo within a vApp container by the
+// string value of its key.
+func EntityFromKey(key string, c *mo.VirtualApp) *types.VAppEntityConfigInfo {
+	log.Printf("[DEBUG] Locating VApp entity with key %s", key)
+	for _, e := range c.VAppConfig.EntityConfig {
+		if e.Key.Value == key {
+			log.Printf("[DEBUG] vApp entity found: %s", key)
+			return &e
+		}
+	}
+	return nil
+}
+
 // Properties returns the VirtualApp managed object from its higher-level
 // object.
 func Properties(obj *object.VirtualApp) (*mo.VirtualApp, error) {
