@@ -215,7 +215,7 @@ func resourceVSphereVAppContainerRead(d *schema.ResourceData, meta interface{}) 
 	if err = d.Set("parent_resource_pool_id", vaProps.Parent.Value); err != nil {
 		return err
 	}
-	err = d.Set("resource_pool_id", vaProps.ResourcePool.Value)
+	err = d.Set("resource_pool_id", vaProps.ResourcePool.Reference().Value)
 	if err != nil {
 		return err
 	}
