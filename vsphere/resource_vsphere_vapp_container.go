@@ -113,6 +113,11 @@ func resourceVSphereVAppContainer() *schema.Resource {
 			Optional:    true,
 			Default:     -1,
 		},
+		"resource_pool_id": {
+			Type:        schema.TypeString,
+			Description: "The managed resource ID of the resource pool created as part of the vApp Container.",
+			Computed:    true,
+		},
 		vSphereTagAttributeKey:    tagsSchema(),
 		customattribute.ConfigKey: customattribute.ConfigSchema(),
 	}
@@ -164,7 +169,6 @@ func resourceVSphereVAppContainerCreate(d *schema.ResourceData, meta interface{}
 		if err != nil {
 			return err
 		}
-		//pf = fmt.Sprintf("/%s/vm", dc.Name())
 		f, err = folder.FromPath(client, "", folder.VSphereFolderTypeVM, dc)
 		if err != nil {
 			return err
@@ -209,6 +213,10 @@ func resourceVSphereVAppContainerRead(d *schema.ResourceData, meta interface{}) 
 		return err
 	}
 	if err = d.Set("parent_resource_pool_id", vaProps.Parent.Value); err != nil {
+		return err
+	}
+	err = d.Set("resource_pool_id", vaProps.ResourcePool.Value)
+	if err != nil {
 		return err
 	}
 	err = flattenVAppContainerConfigSpec(d, vaProps.Config)
