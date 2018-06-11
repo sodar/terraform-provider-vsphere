@@ -46,7 +46,7 @@ func resourceVSphereVAppContainer() *schema.Resource {
 			Description: "The ID of the parent resource pool of the compute resource the resource pool is in.",
 			Required:    true,
 		},
-		"parent_folder": {
+		"parent_folder_id": {
 			Type:        schema.TypeString,
 			Description: "The ID of the parent VM folder.",
 			Optional:    true,
