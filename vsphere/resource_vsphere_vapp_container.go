@@ -183,7 +183,7 @@ func resourceVSphereVAppContainerCreate(d *schema.ResourceData, meta interface{}
 	}
 	d.SetId(va.Reference().Value)
 	log.Printf("[DEBUG] %s: Create finished successfully", resourceVSphereVAppContainerIDString(d))
-	return nil
+	return resourceVSphereVAppContainerRead(d, meta)
 }
 
 func resourceVSphereVAppContainerRead(d *schema.ResourceData, meta interface{}) error {

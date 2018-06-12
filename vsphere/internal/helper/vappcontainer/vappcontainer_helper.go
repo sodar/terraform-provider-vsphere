@@ -45,6 +45,14 @@ func FromID(client *govmomi.Client, id string) (*object.VirtualApp, error) {
 	return obj.(*object.VirtualApp), nil
 }
 
+func IsVApp(client *govmomi.Client, rp string) bool {
+	_, err := FromID(client, rp)
+	if err != nil {
+		return false
+	}
+	return true
+}
+
 // Properties returns the VirtualApp managed object from its higher-level
 // object.
 func Properties(obj *object.VirtualApp) (*mo.VirtualApp, error) {
