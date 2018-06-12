@@ -1,6 +1,7 @@
 package vsphere
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/structure"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/vappcontainer"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/viapi"
+	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/virtualmachine"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/vim25/types"
 )
@@ -22,11 +24,13 @@ func resourceVSphereVAppEntity() *schema.Resource {
 			Type:        schema.TypeString,
 			Description: "Managed object ID of the entity to power on or power off. This can be a virtual machine or a vApp.",
 			Required:    true,
+			ForceNew:    true,
 		},
 		"container_id": {
 			Type:        schema.TypeString,
 			Description: "Managed object ID of the vApp container the entity is a member of.",
 			Required:    true,
+			ForceNew:    true,
 		},
 		"start_action": {
 			Type:        schema.TypeString,
@@ -49,6 +53,12 @@ func resourceVSphereVAppEntity() *schema.Resource {
 			Type:        schema.TypeInt,
 			Description: "Delay in seconds before continuing with the next entity in the order of entities to be stopped.",
 			Optional:    true,
+		},
+		"start_order": {
+			Type:        schema.TypeInt,
+			Description: "Order to start and stop target in vApp.",
+			Optional:    true,
+			Default:     1,
 		},
 		"wait_for_guest": {
 			Type:        schema.TypeBool,
@@ -89,12 +99,25 @@ func resourceVSphereVAppEntityCreate(d *schema.ResourceData, meta interface{}) e
 	if err != nil {
 		return err
 	}
+	target, err := virtualmachine.FromUUID(client, d.Get("target_id").(string))
+	if err != nil {
+		return err
+	}
+	vmp, err := virtualmachine.Properties(target)
+	if err != nil {
+		return err
+	}
+	id := fmt.Sprintf("%s:%s", container.Reference().Value, target.Reference().Value)
+	d.SetId(id)
+
+	mor := vmp.GetManagedEntity().Reference()
 	entityConfig := types.VAppEntityConfigInfo{
+		Key:             &mor,
+		StartOrder:      int32(d.Get("start_order").(int)),
 		StartAction:     d.Get("start_action").(string),
 		StartDelay:      int32(d.Get("start_delay").(int)),
-		StopAction:      d.Get("start_action").(string),
-		StopDelay:       int32(d.Get("start_delay").(int)),
-		StartOrder:      int32(d.Get("start_order").(int)),
+		StopAction:      d.Get("stop_action").(string),
+		StopDelay:       int32(d.Get("stop_delay").(int)),
 		WaitingForGuest: structure.GetBoolPtr(d, "wait_for_guest"),
 	}
 	mo.VAppConfig.EntityConfig = append(mo.VAppConfig.EntityConfig, entityConfig)
@@ -106,7 +129,7 @@ func resourceVSphereVAppEntityCreate(d *schema.ResourceData, meta interface{}) e
 		return err
 	}
 
-	log.Printf("[DEBUG] %s: Create finished successfully", resourceVSphereVAppContainerIDString(d))
+	log.Printf("[DEBUG] %s: Create finished successfully", resourceVSphereVAppEntityIDString(d))
 	return nil
 }
 
@@ -117,6 +140,7 @@ func resourceVSphereVAppEntityRead(d *schema.ResourceData, meta interface{}) err
 		return err
 	}
 	entity, err := resourceVSphereVAppEntityFind(client, d)
+	d.Set("target_id", d.Get("target_id"))
 	if err != nil {
 		return err
 	}
@@ -170,6 +194,46 @@ func resourceVSphereVAppEntityUpdate(d *schema.ResourceData, meta interface{}) e
 }
 
 func resourceVSphereVAppEntityDelete(d *schema.ResourceData, meta interface{}) error {
+	log.Printf("[DEBUG] %s: Beginning delete", resourceVSphereVAppEntityIDString(d))
+	client, err := resourceVSphereVAppContainerClient(meta)
+	if err != nil {
+		return err
+	}
+	vc, err := vappcontainer.FromID(client, d.Get("container_id").(string))
+	if err != nil {
+		return err
+	}
+
+	vcp, err := vappcontainer.Properties(vc)
+	if err != nil {
+		return err
+	}
+	vcp.Entity()
+	vm, err := virtualmachine.FromUUID(client, d.Get("target_id").(string))
+	if err != nil {
+		return err
+	}
+	vmp, err := virtualmachine.Properties(vm)
+	if err != nil {
+		return err
+	}
+	vmo := vmp.ManagedEntity.Reference()
+	var el []types.VAppEntityConfigInfo
+	for _, e := range vcp.VAppConfig.EntityConfig {
+		if *e.Key != vmo {
+			el = append(el, e)
+		}
+	}
+
+	updateSpec := types.VAppConfigSpec{
+		EntityConfig: el,
+	}
+
+	if err = vappcontainer.Update(vc, updateSpec); err != nil {
+		return err
+	}
+
+	log.Printf("[DEBUG] %s: Delete finished successfully", resourceVSphereVAppEntityIDString(d))
 	return nil
 }
 
@@ -196,19 +260,13 @@ func resourceVSphereVAppEntityIDString(d structure.ResourceIDStringer) string {
 }
 
 func flattenVAppEntityConfigSpec(client *govmomi.Client, d *schema.ResourceData, obj *types.VAppEntityConfigInfo) error {
-	target, err := vAppEntityChildReference(client, obj.Key.Value)
-	if err != nil {
-		return err
-	}
 	return structure.SetBatch(d, map[string]interface{}{
-		"target_id":           target,
-		"destroy_with_parent": obj.DestroyWithParent,
-		"start_action":        obj.StartAction,
-		"start_delay":         obj.StartDelay,
-		"start_order":         obj.StartOrder,
-		"stop_action":         obj.StopAction,
-		"stop_delay":          obj.StopDelay,
-		"wait_for_guest":      obj.WaitingForGuest,
+		"start_action":   obj.StartAction,
+		"start_delay":    obj.StartDelay,
+		"start_order":    obj.StartOrder,
+		"stop_action":    obj.StopAction,
+		"stop_delay":     obj.StopDelay,
+		"wait_for_guest": obj.WaitingForGuest,
 	})
 }
 
@@ -218,13 +276,12 @@ func expandVAppEntityConfigSpec(client *govmomi.Client, d *schema.ResourceData) 
 		return nil, err
 	}
 	return &types.VAppEntityConfigInfo{
-		Key:               target,
-		DestroyWithParent: structure.GetBoolPtr(d, "destroy_with_parent"),
-		StartAction:       d.Get("start_action").(string),
-		StartDelay:        int32(d.Get("start_delay").(int)),
-		StopAction:        d.Get("stop_action").(string),
-		StopDelay:         int32(d.Get("stop_delay").(int)),
-		WaitingForGuest:   structure.GetBoolPtr(d, "wait_for_guest"),
+		Key:             target,
+		StartAction:     d.Get("start_action").(string),
+		StartDelay:      int32(d.Get("start_delay").(int)),
+		StopAction:      d.Get("stop_action").(string),
+		StopDelay:       int32(d.Get("stop_delay").(int)),
+		WaitingForGuest: structure.GetBoolPtr(d, "wait_for_guest"),
 	}, nil
 }
 
@@ -234,10 +291,6 @@ func resourceVSphereVAppEntityClient(meta interface{}) (*govmomi.Client, error) 
 		return nil, err
 	}
 	return client, nil
-}
-
-func vAppEntityChildReference(client *govmomi.Client, ref string) (string, error) {
-	return "", nil
 }
 
 func vAppEntityChild(client *govmomi.Client, entity string) (*types.ManagedObjectReference, error) {
