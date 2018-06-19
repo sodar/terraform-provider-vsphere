@@ -159,7 +159,7 @@ func resourceVSphereVAppContainerCreate(d *schema.ResourceData, meta interface{}
 	rpSpec := expandVAppContainerConfigSpec(d)
 	vaSpec := &types.VAppConfigSpec{}
 	var f *object.Folder
-	if pf, ok := d.GetOk("parent_folder"); ok {
+	if pf, ok := d.GetOk("parent_folder_id"); ok {
 		f, err = folder.FromID(client, pf.(string))
 		if err != nil {
 			return err

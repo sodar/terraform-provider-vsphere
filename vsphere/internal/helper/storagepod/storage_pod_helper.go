@@ -9,6 +9,7 @@ import (
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/datastore"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/folder"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/provider"
+	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/vappcontainer"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/virtualmachine"
 	"github.com/vmware/govmomi"
 	"github.com/vmware/govmomi/find"
@@ -173,7 +174,6 @@ func CreateVM(
 		fmt.Sprintf("%s/%s", fo.InventoryPath, spec.Name),
 		pod.Name(),
 	)
-
 	sps := types.StoragePlacementSpec{
 		Type:         string(types.StoragePlacementSpecPlacementTypeCreate),
 		ResourcePool: types.NewReference(pool.Reference()),
@@ -188,7 +188,7 @@ func CreateVM(
 		sps.Host = types.NewReference(host.Reference())
 	}
 
-	return recommendAndApplySDRS(client, sps, provider.DefaultAPITimeout)
+	return recommendAndApplySDRS(client, sps, spec, provider.DefaultAPITimeout)
 }
 
 // CloneVM clones a virtual machine to a datastore cluster via the
@@ -228,7 +228,7 @@ func CloneVM(
 		Type: string(types.StoragePlacementSpecPlacementTypeClone),
 	}
 
-	return recommendAndApplySDRS(client, sps, time.Minute*time.Duration(timeout))
+	return recommendAndApplySDRS(client, sps, *spec.Config, time.Minute*time.Duration(timeout))
 }
 
 // ReconfigureVM reconfigures a virtual machine via the StorageResourceManager
@@ -268,7 +268,7 @@ func ReconfigureVM(
 		ConfigSpec: &spec,
 	}
 
-	_, err = recommendAndApplySDRS(client, sps, provider.DefaultAPITimeout)
+	_, err = recommendAndApplySDRS(client, sps, spec, provider.DefaultAPITimeout)
 	return err
 }
 
@@ -305,13 +305,14 @@ func RelocateVM(
 		Type:         string(types.StoragePlacementSpecPlacementTypeRelocate),
 	}
 
-	_, err = recommendAndApplySDRS(client, sps, time.Minute*time.Duration(timeout))
+	_, err = recommendAndApplySDRS(client, sps, types.VirtualMachineConfigSpec{}, time.Minute*time.Duration(timeout))
 	return err
 }
 
 func recommendAndApplySDRS(
 	client *govmomi.Client,
 	sps types.StoragePlacementSpec,
+	spec types.VirtualMachineConfigSpec,
 	timeout time.Duration,
 ) (*object.VirtualMachine, error) {
 	log.Printf("[DEBUG] Acquiring and applying Storage DRS recommendations (type: %q)", sps.Type)
@@ -327,6 +328,25 @@ func recommendAndApplySDRS(
 		return nil, fmt.Errorf("no storage DRS recommendations were found for the requested action (type: %q)", sps.Type)
 	}
 
+	// If the parent resource pool is a vApp, we need to create the VM using the
+	// CreateChildVM vApp function rather than by directly using SDRS
+	// recommendations.
+	if vc, _ := vappcontainer.FromID(client, sps.ResourcePool.Reference().Value); vc != nil {
+		ds, err := datastore.FromID(client, placement.Recommendations[0].Action[0].(*types.StoragePlacementAction).Destination.Reference().Value)
+		if err != nil {
+			return nil, err
+		}
+		spec.Files = &types.VirtualMachineFileInfo{
+			VmPathName: fmt.Sprintf("[%s]", ds.Name()),
+		}
+		f, err := folder.FromID(client, sps.Folder.Reference().Value)
+		if err != nil {
+			return nil, err
+		}
+		return virtualmachine.Create(client, f, spec, vc.ResourcePool, nil)
+	}
+
+	//placement.Recommendations[0].Target
 	// Apply the first recommendation
 	task, err := srm.ApplyStorageDrsRecommendation(ctx, []string{placement.Recommendations[0].Key})
 	if err != nil {
