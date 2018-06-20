@@ -228,7 +228,7 @@ func CloneVM(
 		Type: string(types.StoragePlacementSpecPlacementTypeClone),
 	}
 
-	return recommendAndApplySDRS(client, sps, *spec.Config, time.Minute*time.Duration(timeout))
+	return recommendAndApplySDRS(client, sps, types.VirtualMachineConfigSpec{}, time.Minute*time.Duration(timeout))
 }
 
 // ReconfigureVM reconfigures a virtual machine via the StorageResourceManager
@@ -331,19 +331,21 @@ func recommendAndApplySDRS(
 	// If the parent resource pool is a vApp, we need to create the VM using the
 	// CreateChildVM vApp function rather than by directly using SDRS
 	// recommendations.
-	if vc, _ := vappcontainer.FromID(client, sps.ResourcePool.Reference().Value); vc != nil {
-		ds, err := datastore.FromID(client, placement.Recommendations[0].Action[0].(*types.StoragePlacementAction).Destination.Reference().Value)
-		if err != nil {
-			return nil, err
+	if sps.ResourcePool != nil {
+		if vc, _ := vappcontainer.FromID(client, sps.ResourcePool.Reference().Value); vc != nil && sps.Type == "create" {
+			ds, err := datastore.FromID(client, placement.Recommendations[0].Action[0].(*types.StoragePlacementAction).Destination.Reference().Value)
+			if err != nil {
+				return nil, err
+			}
+			spec.Files = &types.VirtualMachineFileInfo{
+				VmPathName: fmt.Sprintf("[%s]", ds.Name()),
+			}
+			f, err := folder.FromID(client, sps.Folder.Reference().Value)
+			if err != nil {
+				return nil, err
+			}
+			return virtualmachine.Create(client, f, spec, vc.ResourcePool, nil)
 		}
-		spec.Files = &types.VirtualMachineFileInfo{
-			VmPathName: fmt.Sprintf("[%s]", ds.Name()),
-		}
-		f, err := folder.FromID(client, sps.Folder.Reference().Value)
-		if err != nil {
-			return nil, err
-		}
-		return virtualmachine.Create(client, f, spec, vc.ResourcePool, nil)
 	}
 
 	//placement.Recommendations[0].Target
