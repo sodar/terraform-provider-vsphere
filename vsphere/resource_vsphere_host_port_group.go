@@ -2,11 +2,14 @@ package vsphere
 
 import (
 	"fmt"
+	"log"
 
 	"context"
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/terraform-providers/terraform-provider-vsphere/vsphere/internal/helper/structure"
+
+	"github.com/vmware/govmomi/view"
 )
 
 func resourceVSphereHostPortGroup() *schema.Resource {
@@ -66,12 +69,24 @@ func resourceVSphereHostPortGroupCreate(d *schema.ResourceData, meta interface{}
 	if err := ns.AddPortGroup(ctx, *spec); err != nil {
 		return fmt.Errorf("error adding port group: %s", err)
 	}
+	log.Printf("[DEBUG] resourceVSphereHostPortGroupCreate: pg added")
 
+	// TODO(sodar): Find vim.Network object with this PortGroup name
+	// - possibly add a new field to PortGroup state??
+	// - check how provider does this in vsphere_network data object
+	m := view.NewManager(client.Client)
+
+	// TODO(sodar): Currently ID is equal to "prefix:host_system_id:port_group_name"
+	// To make referencing port group from other resources work, I have to:
+	// - store MOID in ID
+	// - retrieve port group object from vSphere using MOID, not host:name tuple
 	saveHostPortGroupID(d, hsID, name)
 	return resourceVSphereHostPortGroupRead(d, meta)
 }
 
 func resourceVSphereHostPortGroupRead(d *schema.ResourceData, meta interface{}) error {
+	log.Printf("[DEBUG] resourceVSphereHostPortGroupRead: start")
+
 	client := meta.(*VSphereClient).vimClient
 	hsID, name, err := portGroupIDsFromResourceID(d)
 	if err != nil {
